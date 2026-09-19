@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Anais3D — Atelier d'impression 3D</title>
 <meta name="description" content="Bobines, coûts de revient, production, stock et ventes de l'atelier d'impression 3D.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-1fGJme05o2p3PkDaQGTbdP+UzUTro9PrLf/NkXVSezE=' 'unsafe-inline' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.min.js https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js https://cdn.jsdelivr.net/npm/jszip@3.10.2/dist/jszip.min.js https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.js https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://jvfvbsiicctnuvdpjska.supabase.co wss://jvfvbsiicctnuvdpjska.supabase.co https://cdn.jsdelivr.net https://fonts.googleapis.com https://fonts.gstatic.com; worker-src 'self'; manifest-src 'self'; frame-src 'none'; base-uri 'self'; form-action 'self'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-AhgOtr1LRPASY/cAeB1VctVw3IL9xXaLOIvVBrDvvb4=' 'unsafe-inline' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.min.js https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js https://cdn.jsdelivr.net/npm/jszip@3.10.2/dist/jszip.min.js https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.js https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://jvfvbsiicctnuvdpjska.supabase.co wss://jvfvbsiicctnuvdpjska.supabase.co https://cdn.jsdelivr.net https://fonts.googleapis.com https://fonts.gstatic.com; worker-src 'self'; manifest-src 'self'; frame-src 'none'; base-uri 'self'; form-action 'self'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <meta name="theme-color" content="#05070A">
@@ -80,7 +80,7 @@
    Socle : constantes, formats, HTML sûr, icônes, logo
    ============================================================================= */
 
-const APP_VERSION = "1.0.0-f12d5678";
+const APP_VERSION = "1.0.0-783c2d22";
 const SCHEMA_VERSION = 3;
 
 // Identité du site, remplie à la construction (tools/sites.mjs) : le même code sert plusieurs sites.
@@ -91,6 +91,7 @@ const SCHEMA_VERSION = 3;
 const SITE = {
   id: "anais3d", name: "Anais3D", prefix: "a3d", lang: "fr", locale: "fr-FR", letter: "M52 22H78L100 98H80L75 80H55L50 98H30ZM59.5 64H70.5L65 43Z",
   supaUrl: "https://jvfvbsiicctnuvdpjska.supabase.co", supaKey: "sb_publishable_83IKpTyF2IO4Z-1asWuQZg_LYFq2zZa",
+  mfaRequired: "1", // '1' : double authentification obligatoire
 };
 const lsKey = (k) => `${SITE.prefix}_${k}`;
 // Mot isolé AFFICHÉ (« actif », « jamais »…) : marqué pour être traduit sur un site dans une autre
@@ -2562,6 +2563,7 @@ const DB_MESSAGES = [
   [/^Cette commande est annulée/, () => 'Cette commande est annulée : remets-la « à faire » avant de la livrer.'],
   [/^Cette commande est déjà livrée/, () => 'Cette commande est déjà livrée (vente déjà enregistrée, peut-être sur un autre appareil).'],
   [/^Code de double authentification requis\.$/, () => 'Code de double authentification requis.'],
+  [/^Double authentification obligatoire/, () => 'Double authentification obligatoire : active-la pour continuer.'],
   [/^Consommation négative refusée\.$/, () => 'Consommation négative refusée.'],
   [/^Des pièces de cette production ont déjà été vendues/, () => "Des pièces de cette production ont déjà été vendues : supprime d'abord les ventes concernées."],
   [/^Identifiant de production manquant\.$/, () => 'Identifiant de production manquant.'],
@@ -8095,6 +8097,7 @@ const Screens = {
         if (relogin && Store.userId && data.user.id !== Store.userId) {
           toast('Connecté avec un autre compte : les actions en attente de l’ancien compte restent gardées pour lui.', { tone: 'warn' });
         }
+        if (await Mfa.needsEnroll(backend)) return Screens.mfaEnroll({ backend, user: data.user });
         const factorId = await Mfa.factorToVerify(backend);
         if (factorId) return Screens.mfa({ backend, user: data.user, factorId });
         await Boot.enter(backend, data.user);
@@ -8192,6 +8195,18 @@ const Mfa = {
     return f ? f.id : null;
   },
 
+  // Obligatoire et pas encore activée ? (liste lue sur le serveur ; hors-ligne : non, la base protège)
+  async needsEnroll(backend) {
+    if (!SITE.mfaRequired) return false;
+    try {
+      const { data, error } = await backend.sb.auth.mfa.listFactors();
+      if (error) return false;
+      return !((data && data.totp) || []).some((f) => f.status === 'verified');
+    } catch {
+      return false;
+    }
+  },
+
   async verify(backend, factorId, code) {
     const { error } = await backend.sb.auth.mfa.challengeAndVerify({ factorId, code });
     return error || null;
@@ -8248,6 +8263,20 @@ Screens.mfa = function mfaScreen({ backend, user, factorId }) {
   if (window.matchMedia('(pointer: fine)').matches) form.code.focus();
 };
 
+// Double authentification obligatoire, pas encore activée : on ne rentre pas sans l'activer
+Screens.mfaEnroll = function mfaEnrollScreen({ backend, user }) {
+  const el = this.frame(html`
+    <div class="card p-5 sm:p-6">
+      <div class="mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-neon/10 text-neon">${icon('ShieldCheck', 'w-6 h-6')}</div>
+      <h1 class="font-display text-2xl font-bold text-slate-50">Protège ton compte</h1>
+      <p class="mt-1 text-sm text-slate-400">Pour entrer dans ${SITE.name}, active la double authentification : en plus du mot de passe, un code à 6 chiffres affiché par une appli gratuite sur ton téléphone. 2 minutes, une seule fois.</p>
+      <button class="btn btn-primary mt-5 h-12 w-full rounded-xl text-[15px]" id="mfa-go">${icon('ShieldCheck', 'w-5 h-5')}<span>Activer maintenant</span></button>
+      <div class="mt-4 text-[13px]"><button class="text-slate-400 hover:text-slate-200" id="mfa-logout">Se déconnecter</button></div>
+    </div>`);
+  el.querySelector('#mfa-go').addEventListener('click', () => openMfaEnroll({ onDone: () => Boot.enter(backend, user), backend }));
+  el.querySelector('#mfa-logout').addEventListener('click', () => Boot.logout());
+};
+
 // Pendant l'utilisation : la base réclame le code (synchronisation en pause, actions gardées)
 async function openMfaCodeModal() {
   const backend = Boot.backend;
@@ -8257,6 +8286,10 @@ async function openMfaCodeModal() {
     factorId = await Mfa.factorFromServer(backend);
   } catch (e) {
     return toast(authErrorMessage(e), { tone: 'bad', title: 'Double authentification' });
+  }
+  if (!factorId && SITE.mfaRequired) {
+    // obligatoire mais plus aucun code sur le compte (retiré après un téléphone perdu) : on le réactive
+    return openMfaEnroll({ onDone: () => { Sync.state.needsMfa = false; Sync.emit(); Sync.kick(); } });
   }
   if (!factorId) {
     // plus de code sur le compte (désactivé ailleurs) : la synchro peut reprendre
@@ -8309,7 +8342,7 @@ function mfaSection() {
   const footer = !i.loaded || i.error
     ? (i.error ? btn('Réessayer', { size: 'sm', variant: 'ghost', icon: 'RefreshCw', action: 'mfa-reload' }) : '')
     : on
-      ? btn('Désactiver', { size: 'sm', variant: 'ghost', icon: 'ShieldOff', action: 'mfa-disable' })
+      ? (SITE.mfaRequired ? '' : btn('Désactiver', { size: 'sm', variant: 'ghost', icon: 'ShieldOff', action: 'mfa-disable' }))
       : btn('Activer', { size: 'sm', variant: 'primary', icon: 'ShieldCheck', action: 'mfa-enable' });
   return settingsSection('s-mfa', 'ShieldCheck', 'Double authentification', subtitle, body, footer);
 }
@@ -8336,8 +8369,7 @@ function decodeURIComponentSafe(s) {
   }
 }
 
-async function openMfaEnroll() {
-  const backend = Boot.backend;
+async function openMfaEnroll({ onDone = null, backend = Boot.backend } = {}) {
   if (!backend || backend.kind !== 'supabase') return;
   const auth = backend.sb.auth.mfa;
   // une activation abandonnée laisse un facteur « non vérifié » : on repart de zéro
@@ -8382,6 +8414,10 @@ async function openMfaEnroll() {
         if (err) return setFieldError(m.el, 'code', authErrorMessage(err));
         done = true;
         m.close();
+        if (onDone) {
+          toast('Double authentification activée : le code sera demandé à chaque nouvelle connexion.', { tone: 'ok', title: 'Compte protégé' });
+          return onDone();
+        }
         toast('Double authentification activée : le code sera demandé à chaque nouvelle connexion.', { tone: 'ok', title: 'Compte protégé' });
         Mfa.reset();
         Mfa.load(backend);
@@ -8395,7 +8431,7 @@ Actions['mfa-enable'] = () => openMfaEnroll();
 Actions['mfa-disable'] = async () => {
   const backend = Boot.backend;
   const f = Mfa.info.factor;
-  if (!backend || !f) return;
+  if (!backend || !f || SITE.mfaRequired) return;
   const ok = await confirmBox({
     title: 'Désactiver la double authentification ?',
     message: 'Le mot de passe seul suffira de nouveau pour entrer dans l’appli.',
@@ -8685,6 +8721,8 @@ const Boot = {
     }
     if (!user && navigator.onLine === false) user = this.storedUser(backend);
     if (!user) return Screens.login();
+    // double authentification obligatoire et jamais activée : activation avant d'entrer
+    if (await Mfa.needsEnroll(backend)) return Screens.mfaEnroll({ backend, user });
     // double authentification activée et session « mot de passe seul » (appli fermée sur l'écran du code)
     const factorId = await Mfa.factorToVerify(backend);
     if (factorId) return Screens.mfa({ backend, user, factorId });
