@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Anais3D — Atelier d'impression 3D</title>
 <meta name="description" content="Bobines, coûts de revient, production, stock et ventes de l'atelier d'impression 3D.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-CKuZ45DKO5GTgEQU/a4WYf/nDdJYNT/94Y3F3zcS2AY=' 'unsafe-inline' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.min.js https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js https://cdn.jsdelivr.net/npm/jszip@3.10.2/dist/jszip.min.js https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.js https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://jvfvbsiicctnuvdpjska.supabase.co wss://jvfvbsiicctnuvdpjska.supabase.co https://cdn.jsdelivr.net https://fonts.googleapis.com https://fonts.gstatic.com; worker-src 'self'; manifest-src 'self'; frame-src 'none'; base-uri 'self'; form-action 'self'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-1fGJme05o2p3PkDaQGTbdP+UzUTro9PrLf/NkXVSezE=' 'unsafe-inline' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.min.js https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js https://cdn.jsdelivr.net/npm/jszip@3.10.2/dist/jszip.min.js https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.js https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://jvfvbsiicctnuvdpjska.supabase.co wss://jvfvbsiicctnuvdpjska.supabase.co https://cdn.jsdelivr.net https://fonts.googleapis.com https://fonts.gstatic.com; worker-src 'self'; manifest-src 'self'; frame-src 'none'; base-uri 'self'; form-action 'self'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <meta name="theme-color" content="#05070A">
@@ -80,7 +80,7 @@
    Socle : constantes, formats, HTML sûr, icônes, logo
    ============================================================================= */
 
-const APP_VERSION = "1.0.0-a7bdf0ee";
+const APP_VERSION = "1.0.0-f12d5678";
 const SCHEMA_VERSION = 3;
 
 // Identité du site, remplie à la construction (tools/sites.mjs) : le même code sert plusieurs sites.
@@ -602,7 +602,10 @@ function orderFieldsProblem(f, partial = false) {
 
 // Exemple de poids restant affiché dans les champs vides (proportionné à la bobine)
 const weighExample = (spool) => Math.round(toNum(spool && spool.initial_weight_g, 1000) * 0.64);
-const materialKey = (m) => normalizeText(m).replace(/[\s_-]+/g, ' ');
+// même matière quelle que soit la langue du site où elle a été saisie (« PLA Mat » = « PLA Mate »,
+// « Résine » = « Resina ») : une bobine et une ligne de modèle se retrouvent toujours
+const materialKey = (m) => normalizeText(m).replace(/[\s_-]+/g, ' ')
+  .replace(/\bmate\b/g, 'mat').replace(/\bresina\b/g, 'resine').replace(/\boutro\b/g, 'autre');
 
 function activeSpools(V) {
   return valuesOf(V.spools).filter((s) => !s.archived);
