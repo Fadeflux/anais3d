@@ -1,6 +1,6 @@
 /* Service worker : l'application s'ouvre même sans réseau.
    Les données ne passent JAMAIS par ici : elles sont gérées par l'appli (IndexedDB + Supabase). */
-const VERSION = "1.0.0-a0c5f1ae";
+const VERSION = "1.0.0-682ba03b";
 // noms propres au site : deux sites à la même adresse ne touchent jamais aux caches de l'autre
 const PREFIX = "a3d";
 const SHELL_CACHE = `${PREFIX}-shell-${VERSION}`;
