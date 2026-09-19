@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Anais3D — Atelier d'impression 3D</title>
 <meta name="description" content="Bobines, coûts de revient, production, stock et ventes de l'atelier d'impression 3D.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Drth4A83kTLjjf3Y8tupd9zRL3jLM5GfAcPXKKvyXbU=' 'unsafe-inline' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.min.js https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js https://cdn.jsdelivr.net/npm/jszip@3.10.2/dist/jszip.min.js https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.js https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.supabase.in wss://*.supabase.in https://cdn.jsdelivr.net https://fonts.googleapis.com https://fonts.gstatic.com; worker-src 'self'; manifest-src 'self'; frame-src 'none'; base-uri 'self'; form-action 'self'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-PGPLoWlKrTftLNXnpiBdxV/pV2xuUBOqy1F7j0YTFLA=' 'unsafe-inline' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.min.js https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js https://cdn.jsdelivr.net/npm/jszip@3.10.2/dist/jszip.min.js https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.js https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://jvfvbsiicctnuvdpjska.supabase.co wss://jvfvbsiicctnuvdpjska.supabase.co https://cdn.jsdelivr.net https://fonts.googleapis.com https://fonts.gstatic.com; worker-src 'self'; manifest-src 'self'; frame-src 'none'; base-uri 'self'; form-action 'self'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <meta name="theme-color" content="#05070A">
@@ -80,14 +80,18 @@
    Socle : constantes, formats, HTML sûr, icônes, logo
    ============================================================================= */
 
-const APP_VERSION = "1.0.0-d1590b61";
+const APP_VERSION = "1.0.0-110d761b";
 const SCHEMA_VERSION = 3;
 
 // Identité du site, remplie à la construction (tools/sites.mjs) : le même code sert plusieurs sites.
 // prefix / id : noms de TOUT ce que le site garde dans le navigateur. Deux sites publiés à la même
 // adresse (fadeflux.github.io) partagent le même stockage : sans noms distincts, l'un lirait les
 // réglages de l'autre ou effacerait sa copie hors-ligne.
-const SITE = { id: "anais3d", name: "Anais3D", prefix: "a3d", lang: "fr", locale: "fr-FR", letter: "M52 22H78L100 98H80L75 80H55L50 98H30ZM59.5 64H70.5L65 43Z" };
+// supaUrl / supaKey : la base du site, inscrite à la construction (vide pour la version de test)
+const SITE = {
+  id: "anais3d", name: "Anais3D", prefix: "a3d", lang: "fr", locale: "fr-FR", letter: "M52 22H78L100 98H80L75 80H55L50 98H30ZM59.5 64H70.5L65 43Z",
+  supaUrl: "https://jvfvbsiicctnuvdpjska.supabase.co", supaKey: "sb_publishable_83IKpTyF2IO4Z-1asWuQZg_LYFq2zZa",
+};
 const lsKey = (k) => `${SITE.prefix}_${k}`;
 // Mot isolé AFFICHÉ (« actif », « jamais »…) : marqué pour être traduit sur un site dans une autre
 // langue (tools/i18n.mjs) ; les mots isolés non marqués sont des clés du code et ne bougent jamais
@@ -1151,7 +1155,7 @@ function historyEvents(V, { range = null, type = 'all', q = '' } = {}) {
   for (const m of valuesOf(V.spool_movements)) {
     if (m.kind !== 'weigh') continue;
     const s = V.spools.get(m.spool_id);
-    ev.push({ key: `spool_movements:${m.id}`, table: 'spool_movements', id: m.id, type: 'weigh', date: m.occurred_at, title: `Pesée · ${spoolLabel(s)}`, sub: `${fmtG(m.measured_g)} restants`, amount: null });
+    ev.push({ key: `spool_movements:${m.id}`, table: 'spool_movements', id: m.id, type: 'weigh', date: m.occurred_at, title: `Pesée · ${spoolLabel(s)}`, sub: ui(`${fmtG(m.measured_g)} restants`), amount: null });
   }
   for (const l of valuesOf(V.production_stock)) {
     if (l.production_id) continue;
@@ -1195,7 +1199,7 @@ function exportCsvProductions(V) {
   const rows = valuesOf(V.productions).sort((a, b) => time(a.occurred_at) - time(b.occurred_at)).map((p) => [
     csvDate(p.occurred_at), p.kind === 'failure' ? 'Print raté' : 'Production', p.item_name, p.quantity, p.kind === 'failure' ? toNum(p.failed_pct) : '',
     toNum(p.grams_total), toNum(p.print_time_min_total), eur(p.material_cost), eur(p.purge_cost), eur(p.hardware_cost), eur(p.machine_cost), eur(p.labor_cost), eur(p.total_cost), eur(p.unit_cost), p.failure_reason || '', p.note || '']);
-  return toCsv(['Date', 'Type', 'Article', 'Quantité', 'Échec (%)', 'Filament (g)', 'Temps machine (min)', 'Matière (€)', 'Purge (€)', 'Quincaillerie (€)', 'Machine (€)', "Main-d'œuvre (€)", 'Total (€)', 'Coût unitaire (€)', 'Raison', 'Note'], rows);
+  return toCsv(['Date', ui('Type'), 'Article', 'Quantité', 'Échec (%)', 'Filament (g)', 'Temps machine (min)', 'Matière (€)', 'Purge (€)', 'Quincaillerie (€)', 'Machine (€)', "Main-d'œuvre (€)", 'Total (€)', 'Coût unitaire (€)', 'Raison', 'Note'], rows);
 }
 function exportCsvSpools(V) {
   const st = settingsOf(V);
@@ -2612,7 +2616,11 @@ function normalizeSupaUrl(input) {
     const u = new URL(s);
     const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(u.hostname);
     if (u.protocol !== 'https:' && !local) return '';
-    return `${u.origin}${u.pathname.replace(/\/(rest|auth)\/v1.*$/, '').replace(/\/+$/, '')}`;
+    const rest = u.pathname.replace(/\/(rest|auth)\/v1.*$/, '').replace(/\/+$/, '');
+    // une base Supabase se trouve à la RACINE de son adresse : un chemin (…/functions/v1/x) pourrait
+    // relayer la connexion par un intermédiaire — refusé
+    if (rest) return '';
+    return u.origin;
   } catch {
     return '';
   }
@@ -3082,7 +3090,7 @@ const Sync = {
     if (s.flushing || s.pulling) return { tone: 'warn', message: 'Toujours en cours : la base répond lentement' };
     if (s.lastError) return { tone: 'bad', message: s.lastError };
     if (pending) return { tone: 'warn', message: `${pl(pending, `${actions(pending)} pas encore envoyée`, `${actions(pending)} pas encore envoyées`)}` };
-    if (failed) return { tone: 'bad', message: `${pl(failed, `${actions(failed)} refusée`, `${actions(failed)} refusées`)} : voir ci-dessous` };
+    if (failed) return { tone: 'bad', message: ui(`${pl(failed, `${actions(failed)} refusée`, `${actions(failed)} refusées`)} : voir ci-dessous`) };
     return { tone: 'ok', message: 'Synchronisation terminée' };
   },
 
@@ -5023,7 +5031,7 @@ function openTemplateModal({ template = null, duplicate = false }) {
   if (!editing) {
     t.id = uuid();
     t.archived = false;
-    if (duplicate) t.name = `${template.name} (copie)`.slice(0, 120);
+    if (duplicate) t.name = ui(`${template.name} (copie)`).slice(0, 120);
   }
   if (!Array.isArray(t.materials)) t.materials = [];
   if (!t.materials.length) t.materials.push(newMaterialLine(V0, []));
@@ -5068,7 +5076,7 @@ function openTemplateModal({ template = null, duplicate = false }) {
   const suggestion = () => {
     const { st, pr, sug } = numbers();
     return html`<div class="mt-3 flex items-end justify-between gap-3">
-      <div><div class="font-display text-2xl font-bold tabular-nums text-cyan-300">${fmtEur(sug.rounded)}</div><div class="text-[12px] text-slate-500">${pr.mode === 'margin' ? `marge ${fmtNum(pr.marginPct, 1)} %` : `coût × ${fmtNum(pr.coef, 2)}`} = ${fmtEur(sug.raw)}${st.price_rounding !== 'none' ? ', arrondi' : ''}</div></div>
+      <div><div class="font-display text-2xl font-bold tabular-nums text-cyan-300">${fmtEur(sug.rounded)}</div><div class="text-[12px] text-slate-500">${pr.mode === 'margin' ? ui(`marge ${fmtNum(pr.marginPct, 1)} %`) : `coût × ${fmtNum(pr.coef, 2)}`} = ${fmtEur(sug.raw)}${st.price_rounding !== 'none' ? ', arrondi' : ''}</div></div>
       ${btn('Utiliser', { size: 'sm', action: 'use-suggested', icon: 'ArrowDown' })}
     </div>`;
   };
@@ -5506,7 +5514,7 @@ function piecesTab(V) {
   const value = sum(ready, (g) => g.value);
   return html`
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <p class="text-sm text-slate-400"><span class="font-semibold text-slate-100">${fmtNum(sum(ready, (g) => g.qty))}</span> ${sum(ready, (g) => g.qty) >= 2 ? 'pièces prêtes' : 'pièce prête'} · valeur ${fmtEur(value)}</p>
+      <p class="text-sm text-slate-400"><span class="font-semibold text-slate-100">${fmtNum(sum(ready, (g) => g.qty))}</span> ${pl(sum(ready, (g) => g.qty), 'pièce prête', 'pièces prêtes')} · valeur ${fmtEur(value)}</p>
       ${btn('Stock déjà fabriqué', { size: 'sm', variant: 'ghost', icon: 'PackagePlus', action: 'st-add-stock' })}
     </div>
     ${ready.length ? html`<div class="card divide-y divide-white/[0.05] overflow-hidden">${ready.map((g) => stockRow(V, g))}</div>`
@@ -5756,7 +5764,7 @@ function openProductionModal({ kind = 'production', templateId = null, quantity 
               <div class="flex items-center gap-2">
                 ${btn('', { size: 'icon', icon: 'Minus', action: 'qty-minus', title: 'Moins' })}
                 ${inputNum('quantity', d.quantity, { placeholder: '1', inputmode: 'numeric', cls: 'w-24 [&_input]:text-center [&_input]:font-display [&_input]:text-lg' })}
-                ${btn('', { size: 'icon', icon: 'Plus', action: 'qty-plus', title: 'Plus' })}
+                ${btn('', { size: 'icon', icon: 'Plus', action: 'qty-plus', title: ui('Plus') })}
                 ${toNum(t.pieces_per_print) > 1 && !isFail ? html`<span class="text-[12px] text-slate-500">${plural(Math.ceil(toNum(d.quantity) / toNum(t.pieces_per_print)), 'plateau', 'plateaux')}</span>` : ''}
               </div>
             </div>
@@ -6670,11 +6678,11 @@ VIEWS.parametres = {
                 <div class="flex justify-between gap-3"><span class="text-slate-400">Clé publique</span><span class="font-mono text-[13px] text-slate-200">${cfg ? maskKey(cfg.key) : '—'}</span></div>
                 <div class="flex justify-between gap-3"><span class="text-slate-400">État</span><span class="text-slate-200">${Sync.summary().label}</span></div>
                 <div class="flex justify-between gap-3"><span class="text-slate-400">Temps réel</span><span class="text-slate-200">${Sync.state.realtime === 'on' ? ui('actif') : 'coupé'}</span></div>
-                <div class="flex justify-between gap-3"><span class="text-slate-400">Schéma</span><span class="text-slate-200">${Sync.state.schemaVersion === null ? 'non vérifié' : `version ${Sync.state.schemaVersion}`}</span></div>
+                <div class="flex justify-between gap-3"><span class="text-slate-400">Schéma</span><span class="text-slate-200">${Sync.state.schemaVersion === null ? 'non vérifié' : ui(`version ${Sync.state.schemaVersion}`)}</span></div>
               </div>`,
             isDemo
               ? html`${btn('Remplir avec des exemples', { size: 'sm', variant: 'ghost', icon: 'Sparkles', action: 'demo-seed' })}${btn('Vider la démo', { size: 'sm', variant: 'ghost', icon: 'Trash2', action: 'demo-reset' })}${btn('Connecter Supabase', { size: 'sm', variant: 'primary', icon: 'PlugZap', action: 'connect-supabase' })}`
-              : html`${btn('Autre appareil (QR code)', { size: 'sm', variant: 'ghost', icon: 'QrCode', action: 'pair-device' })}${btn('Modifier la connexion', { size: 'sm', icon: 'Pencil', action: 'connect-supabase' })}`)}
+              : SITE.supaUrl ? '' : html`${btn('Autre appareil (QR code)', { size: 'sm', variant: 'ghost', icon: 'QrCode', action: 'pair-device' })}${btn('Modifier la connexion', { size: 'sm', icon: 'Pencil', action: 'connect-supabase' })}`)}
 
           ${isDemo ? '' : settingsSection('s-compte', 'UserRound', 'Compte', backend && backend.email ? backend.email : '', html`<p class="text-[13px] text-slate-400">Tu peux rester connecté sur plusieurs appareils avec le même compte : tout est synchronisé.</p>
             ${pendingOps ? html`<p class="rounded-xl bg-amber-400/10 p-3 text-[12px] text-amber-200">${pendingOps >= 2 ? `${pendingOps} actions pas encore envoyées : reste connecté jusqu'à ce qu'elles partent.` : "1 action pas encore envoyée : reste connecté jusqu'à ce qu'elle parte."}</p>` : ''}`,
@@ -7324,7 +7332,7 @@ function reportTables(V, r) {
     {
       title: 'Productions et prints ratés',
       empty: 'Aucune production ce mois-ci.',
-      cols: [['Date', 42], ['Pièce', 190, 'wrap'], ['Type', 90], ['Quantité', 55, 'num'], ['Filament', 65, 'num'], ['Coût', 73, 'num']],
+      cols: [['Date', 42], ['Pièce', 190, 'wrap'], [ui('Type'), 90], ['Quantité', 55, 'num'], ['Filament', 65, 'num'], ['Coût', 73, 'num']],
       rows: r.prods.map((p) => [fmtDate(p.occurred_at, 'short'), p.item_name, p.kind === 'failure' ? `Raté (${fmtNum(p.failed_pct)} %)` : 'Production', fmtNum(p.quantity), fmtG(p.grams_total), fmtEur(p.total_cost)]),
     },
     {
@@ -8618,6 +8626,15 @@ const Boot = {
   },
 
   async route() {
+    // base inscrite dans le site : ni configuration, ni mode démo (un appareil resté en démo en sort
+    // tout seul et arrive sur la connexion)
+    if (SITE.supaUrl) {
+      const baked = { url: SITE.supaUrl, key: SITE.supaKey };
+      const cur = lsGet(LS.supa, null);
+      if (!cur || cur.url !== baked.url || cur.key !== baked.key) lsSet(LS.supa, baked);
+      if (lsGet(LS.mode, null) !== 'supabase') lsSet(LS.mode, 'supabase');
+      return this.startSupabase(baked);
+    }
     const mode = lsGet(LS.mode, null);
     if (mode === 'demo') return this.startDemo();
     const cfg = lsGet(LS.supa, null);
@@ -8792,6 +8809,8 @@ const Boot = {
     const m = location.hash.match(/[#&/]setup=([A-Za-z0-9_-]+)/);
     if (!m) return null;
     history.replaceState(null, '', `${location.pathname}${location.search}#/`);
+    // base inscrite dans le site : un lien de configuration est ignoré (il ne peut rien changer)
+    if (SITE.supaUrl) return null;
     try {
       const obj = JSON.parse(b64urlDecode(m[1]));
       const url = normalizeSupaUrl(obj.u);
