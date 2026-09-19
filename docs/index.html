@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Anais3D — Atelier d'impression 3D</title>
 <meta name="description" content="Bobines, coûts de revient, production, stock et ventes de l'atelier d'impression 3D.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-AhgOtr1LRPASY/cAeB1VctVw3IL9xXaLOIvVBrDvvb4=' 'unsafe-inline' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.min.js https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js https://cdn.jsdelivr.net/npm/jszip@3.10.2/dist/jszip.min.js https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.js https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://jvfvbsiicctnuvdpjska.supabase.co wss://jvfvbsiicctnuvdpjska.supabase.co https://cdn.jsdelivr.net https://fonts.googleapis.com https://fonts.gstatic.com; worker-src 'self'; manifest-src 'self'; frame-src 'none'; base-uri 'self'; form-action 'self'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-KWxCyoOrZ0avBrcPECxerQ/vvMrP2fAo4AHFDL0zPIU=' 'unsafe-inline' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.min.js https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js https://cdn.jsdelivr.net/npm/jszip@3.10.2/dist/jszip.min.js https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.js https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://jvfvbsiicctnuvdpjska.supabase.co wss://jvfvbsiicctnuvdpjska.supabase.co https://cdn.jsdelivr.net https://fonts.googleapis.com https://fonts.gstatic.com; worker-src 'self'; manifest-src 'self'; frame-src 'none'; base-uri 'self'; form-action 'self'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <meta name="theme-color" content="#05070A">
@@ -80,7 +80,7 @@
    Socle : constantes, formats, HTML sûr, icônes, logo
    ============================================================================= */
 
-const APP_VERSION = "1.0.0-783c2d22";
+const APP_VERSION = "1.0.0-12416ba9";
 const SCHEMA_VERSION = 3;
 
 // Identité du site, remplie à la construction (tools/sites.mjs) : le même code sert plusieurs sites.
@@ -105,6 +105,9 @@ const LS = {
   ui: lsKey('ui'),
   demoOffline: lsKey('demo_offline'),
   demoSeeded: lsKey('demo_seeded'),
+  // actions reçues de l'ancienne adresse (fadeflux.github.io) déjà reprises : jamais deux fois
+  importes: lsKey('importes_ancienne_adresse'),
+  importEnAttente: lsKey('import_ancienne_adresse'),
 };
 
 const MATERIALS = ['PLA', 'PLA Silk', 'PLA Mat', 'PLA-CF', 'PETG', 'PETG-CF', 'ABS', 'ASA', 'TPU', 'PA', 'PC', 'PVA', 'Résine', 'Autre'];
@@ -2009,9 +2012,13 @@ const OPS = {
     keys: () => [],
     apply(V, p, ctx) {
       V.sales.delete(p.id);
-      // commande livrée par cette vente : elle redevient « prête » (même règle dans p3d_delete_sale)
+      // commande livrée par cette vente : elle redevient « prête » (même règle dans p3d_delete_sale).
+      // ⚠️ (19/09) SANS toucher updated_at : cette suppression, une fois confirmée, s'écrit dans la copie
+      // de référence (applyConfirmedDelete) ; tamponnée à l'heure du TÉLÉPHONE (souvent en avance), la
+      // commande paraissait plus récente que la ligne de la base, qui était ignorée — et avec elle toute
+      // modification faite ailleurs entre-temps. La base date la ligne elle-même ; sa version gagne.
       for (const o of valuesOf(V.orders)) {
-        if (o.sale_id === p.id) V.orders.set(o.id, { ...o, sale_id: null, status: o.status === 'delivered' ? 'ready' : o.status, updated_at: ctx ? ctx.now : o.updated_at });
+        if (o.sale_id === p.id) V.orders.set(o.id, { ...o, sale_id: null, status: o.status === 'delivered' ? 'ready' : o.status });
       }
       const lots = new Set();
       for (const i of valuesOf(V.sale_items)) {
@@ -2693,10 +2700,12 @@ const REMOTE = {
     const rows = await b.exec(q.select());
     if (rows.length) return { orders: rows };
     // condition d'état non remplie (commande livrée ou annulée ailleurs entre-temps) : rien n'est
-    // écrasé, l'appareil reprend simplement l'état de la base
+    // écrasé, l'appareil reprend simplement l'état de la base.
+    // ⚠️ (19/09) … et le DIT : renvoyé comme un succès, l'écran annonçait « Commande annulée » pour
+    // une commande restée « Livrée » (et sa vente toujours comptée). `inchange` = l'état réel.
     if (Array.isArray(p.from)) {
       const cur = await b.exec(b.sb.from('orders').select().eq('id', p.id));
-      if (cur.length) return { orders: cur };
+      if (cur.length) return { orders: cur, inchange: { status: cur[0].status } };
     }
     return { orders: nothingSaved(rows, 'Cette commande', 'supprimée') };
   },
@@ -3120,7 +3129,7 @@ const Sync = {
     const res = await Promise.race([done, timeout]);
     // délai écoulé : la réponse arrivera plus tard et sera annoncée comme telle
     if (res.timedOut) this.waiters.delete(op.id);
-    return { state: res.state, error: res.error, slow: res.slow, tombstoned: !!res.tombstoned, opId: op.id };
+    return { state: res.state, error: res.error, slow: res.slow, tombstoned: !!res.tombstoned, inchange: res.inchange || null, opId: op.id };
   },
 
   resolveWaiter(op, result) {
@@ -3132,7 +3141,7 @@ const Sync = {
     }
     if (op.silent && result.state !== 'failed') return;
     // « supprimé entre-temps sur un autre appareil » : l'action n'a rien enregistré, on ne l'annonce pas comme faite
-    if (result.state === 'confirmed' && result.tombstoned) this.skippedWhileAway++;
+    if (result.state === 'confirmed' && (result.tombstoned || result.inchange)) this.skippedWhileAway++;
     else if (result.state === 'confirmed') this.confirmedWhileAway++;
     else if (result.state === 'failed') this.failedWhileAway++;
   },
@@ -3233,7 +3242,7 @@ const Sync = {
           this.state.online = true;
           this.state.lastConfirmAt = new Date().toISOString();
           this.retryDelay = 0;
-          this.resolveWaiter(op, { state: 'confirmed', tombstoned: !!(bundle && bundle.tombstoned) });
+          this.resolveWaiter(op, { state: 'confirmed', tombstoned: !!(bundle && bundle.tombstoned), inchange: (bundle && bundle.inchange) || null });
           if (bundle && bundle.pullAfter) setTimeout(() => this.pull(), 50);
         }
       });
@@ -3603,6 +3612,13 @@ function withBusy(el, result) {
 // Annonce honnête du résultat d'une action
 async function runOp(type, payload, { success = 'Enregistré' } = {}) {
   const res = await Sync.enqueue(type, payload);
+  // ⚠️ (19/09) Rien n'a changé (l'élément avait changé sur un autre appareil) : jamais un « c'est fait »
+  if (res.state === 'confirmed' && res.inchange) {
+    const st = res.inchange.status && ORDER_STATUS[res.inchange.status];
+    toast(st ? `Rien n'a été modifié : cette commande a changé sur un autre appareil entre-temps (elle est maintenant « ${st.label} »).`
+      : "Rien n'a été modifié : cet élément a changé sur un autre appareil entre-temps.", { tone: 'warn', title: 'Action ignorée' });
+    return res;
+  }
   if (res.state === 'confirmed' && res.tombstoned) {
     toast('Cet élément avait déjà été supprimé sur un autre appareil : rien n’a été enregistré.', { tone: 'warn', title: 'Action ignorée' });
     return res;
@@ -7526,7 +7542,7 @@ Actions['bilan-month'] = (el) => go(`#/bilan?m=${el.dataset.value}`);
 Actions['bilan-print'] = () => printSheet(reportHtml(Store.V, monthReport(Store.V, App.route.params.m)));
 Actions['bilan-pdf'] = () => {
   const r = monthReport(Store.V, App.route.params.m);
-  return sharePdf(`${SITE.id}-bilan-${r.range.ym}.pdf`, () => reportPdf(Store.V, r));
+  return sharePdf(`${SITE.id}-${ui('bilan')}-${r.range.ym}.pdf`, () => reportPdf(Store.V, r));
 };
 Actions['open-bilan'] = () => go('#/bilan');
 
@@ -7651,7 +7667,7 @@ Actions['labels-print'] = () => {
 Actions['labels-pdf'] = () => {
   const ids = selectedLabelIds();
   if (!ids.length || !globalThis.qrcode) return;
-  return sharePdf(`${SITE.id}-etiquettes-${dayKey(new Date().toISOString())}.pdf`, () => labelsPdf(Store.V, ids));
+  return sharePdf(`${SITE.id}-${ui('etiquettes')}-${dayKey(new Date().toISOString())}.pdf`, () => labelsPdf(Store.V, ids));
 };
 Actions['open-labels'] = (el) => {
   Labels.selected = null;
@@ -8198,6 +8214,15 @@ const Mfa = {
   // Obligatoire et pas encore activée ? (liste lue sur le serveur ; hors-ligne : non, la base protège)
   async needsEnroll(backend) {
     if (!SITE.mfaRequired) return false;
+    // ⚠️ (19/09) D'ABORD la session gardée sur l'appareil : elle liste déjà les codes activés. Demander
+    // au serveur à chaque ouverture faisait attendre le réseau AVANT d'afficher quoi que ce soit —
+    // jusqu'à 30 s en 4G faible, pour un compte dont le code est activé depuis longtemps. Le serveur
+    // n'est interrogé que si la session ne connaît aucun code (première activation, ou activé ailleurs).
+    try {
+      const { data: s } = await backend.sb.auth.getSession();
+      const locaux = (s && s.session && s.session.user && s.session.user.factors) || [];
+      if (locaux.some((f) => f.status === 'verified' && f.factor_type === 'totp')) return false;
+    } catch { /* session illisible : on demande au serveur */ }
     try {
       const { data, error } = await backend.sb.auth.mfa.listFactors();
       if (error) return false;
@@ -8645,6 +8670,7 @@ const Boot = {
     // Jamais utilisable à l'intérieur d'un autre site (piège à clics) : GitHub Pages ne permet pas
     // d'interdire les cadres par en-tête, l'appli refuse donc elle-même de démarrer dans un cadre.
     if (this.framed()) return Screens.framed();
+    this.captureOldAddressImport();
     // Lien de configuration collé dans un onglet où l'appli est déjà ouverte : un simple changement après
     // « # » ne recharge pas la page, on recharge donc pour le traiter comme à l'ouverture (confirmation).
     window.addEventListener('hashchange', () => {
@@ -8751,6 +8777,63 @@ const Boot = {
     App.start();
     Sync.start(backend);
     this.bindNotifier();
+    await this.importOldAddress();
+  },
+
+  // ⚠️ (19/09) DÉMÉNAGEMENT fadeflux.github.io -> Railway. Une action faite hors-ligne sur l'ancienne
+  // adresse et pas encore envoyée restait dans le stockage de CETTE adresse-là, que la nouvelle ne peut
+  // pas lire : elle était perdue sans un mot. La page de redirection (tools/redirect-old.mjs) la lit et
+  // l'apporte dans le lien (#p3d-import=…) ; on la garde le temps de la connexion, puis on la remet dans
+  // la file de l'appareil (même compte seulement), d'où elle part comme n'importe quelle action.
+  captureOldAddressImport() {
+    const m = location.hash.match(/^#p3d-import=([A-Za-z0-9_-]+)$/);
+    if (!m) return;
+    try {
+      sessionStorage.setItem(LS.importEnAttente, m[1]);
+    } catch { /* stockage indisponible : rien à garder */ }
+    history.replaceState(null, '', `${location.pathname}${location.search}#/`);
+  },
+
+  async importOldAddress() {
+    let raw = null;
+    try {
+      raw = sessionStorage.getItem(LS.importEnAttente);
+    } catch {
+      return;
+    }
+    if (!raw) return;
+    let paquets = null;
+    try {
+      paquets = JSON.parse(b64urlDecode(raw));
+    } catch {
+      paquets = null;
+    }
+    if (!Array.isArray(paquets)) {
+      sessionStorage.removeItem(LS.importEnAttente);
+      return;
+    }
+    const mien = paquets.find((p) => p && p.db === Store.dbName);
+    if (!mien) {
+      toast("Des actions faites sur l'ancienne adresse appartiennent à un autre compte : connecte-toi avec ce compte pour les récupérer.", { tone: 'warn' });
+      return;
+    }
+    const deja = new Set(lsGet(LS.importes, []));
+    let n = 0;
+    for (const op of Array.isArray(mien.ops) ? mien.ops : []) {
+      if (!op || !op.id || !OPS[op.type] || deja.has(op.id) || Store.Q.some((o) => o.id === op.id)) continue;
+      if (await Store.putOp({ ...op, status: op.status === 'failed' ? 'failed' : 'pending', attempts: 0 })) {
+        deja.add(op.id);
+        n++;
+      }
+    }
+    lsSet(LS.importes, [...deja]);
+    sessionStorage.removeItem(LS.importEnAttente);
+    if (!n) return;
+    Store.rebuild();
+    Sync.emit();
+    toast(n === 1 ? "1 action faite sur l'ancienne adresse a été récupérée : elle part maintenant."
+      : `${n} actions faites sur l'ancienne adresse ont été récupérées : elles partent maintenant.`, { tone: 'ok' });
+    Sync.kick();
   },
 
   async startDemo() {
