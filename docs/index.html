@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Anais3D — Atelier d'impression 3D</title>
 <meta name="description" content="Bobines, coûts de revient, production, stock et ventes de l'atelier d'impression 3D.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-KWxCyoOrZ0avBrcPECxerQ/vvMrP2fAo4AHFDL0zPIU=' 'unsafe-inline' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.min.js https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js https://cdn.jsdelivr.net/npm/jszip@3.10.2/dist/jszip.min.js https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.js https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://jvfvbsiicctnuvdpjska.supabase.co wss://jvfvbsiicctnuvdpjska.supabase.co https://cdn.jsdelivr.net https://fonts.googleapis.com https://fonts.gstatic.com; worker-src 'self'; manifest-src 'self'; frame-src 'none'; base-uri 'self'; form-action 'self'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-w8O6gqBweicYCJ3p1mhUPSZXxfXwUVpjkhHhuhiq/eE=' 'unsafe-inline' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.min.js https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js https://cdn.jsdelivr.net/npm/jszip@3.10.2/dist/jszip.min.js https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.js https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://jvfvbsiicctnuvdpjska.supabase.co wss://jvfvbsiicctnuvdpjska.supabase.co https://cdn.jsdelivr.net https://fonts.googleapis.com https://fonts.gstatic.com; worker-src 'self'; manifest-src 'self'; frame-src 'none'; base-uri 'self'; form-action 'self'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <meta name="theme-color" content="#05070A">
@@ -80,7 +80,7 @@
    Socle : constantes, formats, HTML sûr, icônes, logo
    ============================================================================= */
 
-const APP_VERSION = "1.0.0-12416ba9";
+const APP_VERSION = "1.0.0-62d1fd06";
 const SCHEMA_VERSION = 3;
 
 // Identité du site, remplie à la construction (tools/sites.mjs) : le même code sert plusieurs sites.
@@ -8782,7 +8782,7 @@ const Boot = {
 
   // ⚠️ (19/09) DÉMÉNAGEMENT fadeflux.github.io -> Railway. Une action faite hors-ligne sur l'ancienne
   // adresse et pas encore envoyée restait dans le stockage de CETTE adresse-là, que la nouvelle ne peut
-  // pas lire : elle était perdue sans un mot. La page de redirection (tools/redirect-old.mjs) la lit et
+  // pas lire : elle était perdue sans un mot. La page de redirection (tools/railway-redirect.mjs ; avant : redirect-old.mjs) la lit et
   // l'apporte dans le lien (#p3d-import=…) ; on la garde le temps de la connexion, puis on la remet dans
   // la file de l'appareil (même compte seulement), d'où elle part comme n'importe quelle action.
   captureOldAddressImport() {
