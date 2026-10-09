@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Anais3D — Atelier d'impression 3D</title>
 <meta name="description" content="Bobines, coûts de revient, production, stock et ventes de l'atelier d'impression 3D.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-e+9v68U05lP4EsUWvsTr64tS/af705+SllqbhIaBHqc=' 'unsafe-inline' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.min.js https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js https://cdn.jsdelivr.net/npm/jszip@3.10.2/dist/jszip.min.js https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.js https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://jvfvbsiicctnuvdpjska.supabase.co wss://jvfvbsiicctnuvdpjska.supabase.co https://cdn.jsdelivr.net https://fonts.googleapis.com https://fonts.gstatic.com; worker-src 'self'; manifest-src 'self'; frame-src 'none'; base-uri 'self'; form-action 'self'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-H52G/458YFU5tYZrx5NFltwU9MH1+Oq4x5Qf5QeGKws=' 'unsafe-inline' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.min.js https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js https://cdn.jsdelivr.net/npm/jszip@3.10.2/dist/jszip.min.js https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.js https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://jvfvbsiicctnuvdpjska.supabase.co wss://jvfvbsiicctnuvdpjska.supabase.co https://cdn.jsdelivr.net https://fonts.googleapis.com https://fonts.gstatic.com; worker-src 'self'; manifest-src 'self'; frame-src 'none'; base-uri 'self'; form-action 'self'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <meta name="theme-color" content="#05070A">
@@ -80,7 +80,7 @@
    Socle : constantes, formats, HTML sûr, icônes, logo
    ============================================================================= */
 
-const APP_VERSION = "1.0.0-7f3751c4";
+const APP_VERSION = "1.0.0-1f75ab89";
 const SCHEMA_VERSION = 3;
 
 // Identité du site, remplie à la construction (tools/sites.mjs) : le même code sert plusieurs sites.
@@ -105,9 +105,8 @@ const LS = {
   ui: lsKey('ui'),
   demoOffline: lsKey('demo_offline'),
   demoSeeded: lsKey('demo_seeded'),
+  mfaVu: lsKey('mfa_vu'), // le code à 6 chiffres a déjà été validé sur cet appareil
   // actions reçues de l'ancienne adresse (fadeflux.github.io) déjà reprises : jamais deux fois
-  importes: lsKey('importes_ancienne_adresse'),
-  importEnAttente: lsKey('import_ancienne_adresse'),
 };
 
 const MATERIALS = ['PLA', 'PLA Silk', 'PLA Mat', 'PLA-CF', 'PETG', 'PETG-CF', 'ABS', 'ASA', 'TPU', 'PA', 'PC', 'PVA', 'Résine', 'Autre'];
@@ -582,11 +581,15 @@ function weighProblem(spool, measured) {
 }
 // Nombre de pièces saisi : un entier ≥ 1. Jamais arrondi en silence (« 1,5 » est une faute de frappe :
 // l'arrondir enregistrerait 2 pièces sans prévenir).
+const PIECES_MAX = 100000; // check (quantity between 1 and 100000) sur production_stock et sale_items
 function isPieceCount(v) {
   const n = toNum(v, NaN);
-  return Number.isInteger(n) && n >= 1;
+  return Number.isInteger(n) && n >= 1 && n <= PIECES_MAX;
 }
-const PIECES_ERROR = 'Nombre entier de pièces (1, 2, 3…).';
+const PIECES_ERROR = `Nombre entier de pièces, de 1 à ${fmtNum(PIECES_MAX)}.`;
+// Prix et frais : exactement ce que les colonnes acceptent (numeric(12,2), montants positifs)
+const MONEY_MAX = 1e8;
+const isMoney = (v, { positif = true } = {}) => Number.isFinite(toNum(v, NaN)) && toNum(v) < MONEY_MAX && (!positif || toNum(v) >= 0);
 
 // Champs d'une commande : EXACTEMENT les limites de la table orders (sinon l'action serait acceptée
 // hors-ligne puis refusée par la base). partial : seuls les champs présents sont vérifiés (modification).
@@ -844,11 +847,19 @@ function planProduction(V, opts, st = settingsOf(V)) {
 
 /* ---------- stock de pièces finies ---------- */
 function fifoCmp(a, b) {
-  return (time(a.occurred_at) - time(b.occurred_at)) || (time(a.created_at) - time(b.created_at)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  // microsecondes : la base trie « order by occurred_at, created_at, id » à cette précision. En
+  // millisecondes, deux lots créés dans la même milliseconde étaient départagés par leur identifiant,
+  // donc l'appli pouvait annoncer un coût de revient pris sur un AUTRE lot que celui de la base.
+  const d1 = tsMicros(a.occurred_at) - tsMicros(b.occurred_at);
+  const d2 = tsMicros(a.created_at) - tsMicros(b.created_at);
+  return (d1 > 0 ? 1 : d1 < 0 ? -1 : 0) || (d2 > 0 ? 1 : d2 < 0 ? -1 : 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 }
 
+// Nom de pièce comparé sans les espaces des deux bouts, insécables comprises (un nom collé depuis une
+// annonce en contient souvent) : la base, elle, n'enlève que les espaces ordinaires avec btrim().
+const itemKey = (v) => String(v ?? '').replace(/^[\s\u00a0\u202f]+|[\s\u00a0\u202f]+$/g, '');
 function lotMatches(lot, templateId, itemName) {
-  return templateId ? lot.template_id === templateId : !lot.template_id && lot.item_name === String(itemName || '').trim();
+  return templateId ? lot.template_id === templateId : !lot.template_id && itemKey(lot.item_name) === itemKey(itemName);
 }
 
 function computeLotAvailable(lot, allocations, adjustments) {
@@ -1157,7 +1168,7 @@ function historyEvents(V, { range = null, type = 'all', q = '' } = {}) {
     });
   }
   for (const s of valuesOf(V.spools)) {
-    ev.push({ key: `spools:${s.id}`, table: 'spools', id: s.id, type: 'spool', date: s.created_at, title: `Bobine ajoutée · ${spoolLabel(s)}`, sub: `${fmtG(s.initial_weight_g)} · ${fmtEur(s.price)}`, amount: -toNum(s.price) });
+    ev.push({ key: `spools:${s.id}`, table: 'spools', id: s.id, type: 'spool', date: s.purchased_at ? `${s.purchased_at}T12:00:00` : s.created_at, title: `Bobine ajoutée · ${spoolLabel(s)}`, sub: `${fmtG(s.initial_weight_g)} · ${fmtEur(s.price)}`, amount: -toNum(s.price) });
   }
   for (const m of valuesOf(V.spool_movements)) {
     if (m.kind !== 'weigh') continue;
@@ -1906,7 +1917,9 @@ const OPS = {
     done: (S, p) => S.production_stock.has(p.id),
     validate(V, p) {
       if (!isPieceCount(p.quantity)) return new OpError('P3D09', `Quantité invalide : ${PIECES_ERROR}`);
-      if (!String(p.item_name || '').trim()) return new OpError('P3D09', 'Nom de pièce manquant.');
+      if (!itemKey(p.item_name)) return new OpError('P3D09', 'Nom de pièce manquant.');
+      if ([...itemKey(p.item_name)].length > 120) return new OpError('P3D09', 'Nom de pièce trop long (120 caractères au plus).');
+      if (!isMoney(p.unit_cost)) return new OpError('P3D09', 'Coût invalide.');
       return null;
     },
     apply(V, p, ctx) {
@@ -1954,7 +1967,8 @@ const OPS = {
       if (o && o.status === 'cancelled') return new OpError('P3D11', 'Cette commande est annulée : remets-la « à faire » avant de la livrer.');
       for (const i of p.items) {
         if (!isPieceCount(i.quantity)) return new OpError('P3D09', `Quantité invalide pour « ${String(i.item_name || '').trim()} » : ${PIECES_ERROR}`);
-        if (toNum(i.unit_price) < 0) return new OpError('P3D09', 'Prix invalide.');
+        if (!isMoney(i.unit_price)) return new OpError('P3D09', 'Prix invalide.');
+        if (!itemKey(i.item_name) || [...itemKey(i.item_name)].length > 120) return new OpError('P3D09', 'Indique la pièce vendue (120 caractères au plus).');
       }
       const reqs = p.items.filter((i) => i.from_stock !== false);
       const res = simulateFifo(V, reqs);
@@ -2067,6 +2081,12 @@ function buildView(S, Q, ctx) {
     V.pendingCount++;
     try {
       if (def.done && def.done(S, op.payload)) continue;
+      const err = def.validate ? def.validate(V, op.payload) : null;
+      if (err) {
+        // la base la refusera : on ne l'invente pas à l'écran (ni stock, ni marge imaginaires)
+        V.pendingInvalid = (V.pendingInvalid || 0) + 1;
+        continue;
+      }
       def.apply(V, op.payload, ctx);
       for (const k of def.keys(op.payload, ctx)) V.pending.add(k);
     } catch (e) {
@@ -2215,20 +2235,34 @@ const Store = {
         },
       });
       this.volatile = false;
-      const lastPull = {};
-      for (const t of TABLES) {
-        const rows = await IDB.get(this.db, `snap:${t}`);
-        if (Array.isArray(rows)) for (const r of rows) this.S[t].set(r[PK(t)], normalizeRow(t, r));
-        const pos = await IDB.get(this.db, `pull:${t}`);
-        if (pos) lastPull[t] = pos;
-      }
-      // ancienne file (un seul tableau) → une entrée par action
-      const legacy = await IDB.get(this.db, 'outbox');
+      // ⚠️ La FILE d'abord : une copie locale abîmée ne doit jamais faire disparaître des actions pas
+      // encore envoyées (elles restaient écrites sur l'appareil, invisibles, avec un badge « Synchronisé »).
+      const legacy = await IDB.get(this.db, 'outbox'); // ancienne file (un seul tableau) → une entrée par action
       if (Array.isArray(legacy)) {
         await IDB.setMany(this.db, legacy.map((op, k) => [`op:${op.id}`, { ...op, seq: op.seq || k + 1 }]));
         await IDB.delMany(this.db, ['outbox']);
       }
       await this.reloadQueue();
+      const lastPull = {};
+      for (const t of TABLES) {
+        // chaque table est protégée séparément : une table illisible est relue à la prochaine
+        // synchronisation, les autres et la file restent intactes
+        try {
+          const rows = await IDB.get(this.db, `snap:${t}`);
+          if (Array.isArray(rows)) {
+            for (const r of rows) {
+              if (!r || r[PK(t)] == null) continue;
+              this.S[t].set(r[PK(t)], normalizeRow(t, r));
+            }
+          }
+          const pos = await IDB.get(this.db, `pull:${t}`);
+          if (pos) lastPull[t] = pos;
+        } catch (e) {
+          console.warn(`[${SITE.id}] copie locale illisible (${t}) : relue depuis la base`, e);
+          this.S[t].clear();
+          delete lastPull[t];
+        }
+      }
       const meta = (await IDB.get(this.db, 'meta')) || {};
       // anciennes copies : repères dans « meta » (seulement pour les tables qui n'ont pas encore le leur)
       this.meta = { ...this.meta, ...meta, lastPull: { ...(meta.lastPull || {}), ...lastPull } };
@@ -2556,6 +2590,7 @@ function classifyError(e) {
   if (!status) return 'network';
   // double authentification activée, session sans le code (mot de passe seul) : demander le code
   if (e && e.hint === 'P3D2F') return 'mfa';
+  if (code === 'P3D00') return 'auth'; // session perdue côté base : rafraîchir puis réessayer
   if (status === 401 || AUTH_CODES.includes(code)) return 'auth';
   if (code === 'PGRST202' || code === 'PGRST205' || code === '42P01' || code === '42883' || code === 'PGRST204') return 'schema';
   if (status >= 500 || status === 408 || status === 429 || code === '57014') return 'network';
@@ -3222,6 +3257,7 @@ const Sync = {
               // session valide mais la base refuse encore : c'est un vrai refus
             }
             if (kind === 'schema') {
+              this.scheduleRetry(); // sinon plus rien ne repart avant 5 min et un écran visible
               await Store.putOp({ ...op, status: 'pending', authRetried: false });
               this.state.lastError = friendlyError(e, op);
               this.resolvePendingAsQueued();
@@ -3259,7 +3295,12 @@ const Sync = {
   },
 
   async pull({ reconcile = false } = {}) {
+    if (this.state.pulling && reconcile) this.reconcileWanted = true; // rejoué à la fin de la relecture en cours
     if (!this.backend || !this.backend.ready() || this.state.pulling || this.state.needsLogin || this.state.needsMfa) return;
+    if (this.reconcileWanted) {
+      this.reconcileWanted = false;
+      reconcile = true;
+    }
     this.state.pulling = true;
     this.emit();
     const startedAt = Date.now();
@@ -3354,6 +3395,13 @@ const Sync = {
   },
 
   async discardOp(opId) {
+    // une action en cours d'envoi peut être acceptée par la base juste après : l'oublier ici la ferait
+    // réapparaître (un encaissement que l'utilisateur croyait annulé)
+    const op = Store.Q.find((o) => o.id === opId);
+    if (op && op.status === 'sending') {
+      toast("Envoi en cours : attends la réponse de la base avant d'oublier cette action.", { tone: 'warn' });
+      return;
+    }
     await Store.removeOp(opId);
     Store.rebuild();
     this.emit();
@@ -3371,8 +3419,8 @@ const Sync = {
     if (s.needsMfa) return { tone: 'bad', label: 'Code requis', pending, failed };
     if (failed) return { tone: 'bad', label: `${plural(failed, 'action refusée', 'actions refusées')}`, pending, failed };
     if (!s.online) return { tone: 'off', label: pending ? `Hors-ligne · ${pending} en attente` : 'Hors-ligne', pending, failed };
-    if (pending || s.flushing) return { tone: 'warn', label: pending ? `Envoi · ${pending} en attente` : 'Envoi…', pending, failed };
     if (s.lastError) return { tone: 'bad', label: 'Base injoignable', pending, failed };
+    if (pending || s.flushing) return { tone: 'warn', label: pending ? `Envoi · ${pending} en attente` : 'Envoi…', pending, failed };
     if (!s.firstPullDone && s.pulling) return { tone: 'warn', label: 'Chargement…', pending, failed };
     return { tone: 'ok', label: 'Synchronisé', pending, failed };
   },
@@ -3807,6 +3855,10 @@ const App = {
       Store.subscribe(() => this.schedule());
       Sync.subscribe(() => this.updateChrome());
       window.addEventListener('hashchange', () => {
+        // brouillons des Paramètres (canaux de vente, méthode de prix) : on quitte la page sans
+        // enregistrer -> ils ne doivent pas survivre et faire croire que c'est enregistré
+        delete this.ui.channelsDraft;
+        delete this.ui.pricingDraft;
         this.route = parseHash();
         this.routeChanged = true;
         this.render();
@@ -4456,7 +4508,7 @@ function backupReminder(V) {
 }
 async function downloadBackup() {
   const stampDay = toLocalInput().slice(0, 10); // date LOCALE : après minuit en France, pas celle de la veille (UTC)
-  const saved = await saveFile(`${SITE.id}-sauvegarde-${stampDay}.json`, exportJson(Store.V), 'application/json');
+  const saved = await saveFile(`${SITE.id}-${ui('sauvegarde')}-${stampDay}.json`, exportJson(Store.V), 'application/json');
   if (!saved) return;
   if (Sync.backend && Sync.backend.kind === 'supabase') {
     await Sync.enqueue('settings.save', { last_backup_at: new Date().toISOString() }, { wait: 0, silent: true });
@@ -4490,10 +4542,10 @@ Actions['export-open'] = () => {
     actions: {
       'x-json': () => downloadBackup(),
       'x-bilan': (el, e, m) => { m.close(); go('#/bilan'); },
-      'x-journal': () => saveFile(`${SITE.id}-journal-${stampDay}.csv`, exportCsvJournal(Store.V), 'text/csv;charset=utf-8'),
-      'x-sales': () => saveFile(`${SITE.id}-ventes-${stampDay}.csv`, exportCsvSales(Store.V), 'text/csv;charset=utf-8'),
-      'x-prod': () => saveFile(`${SITE.id}-productions-${stampDay}.csv`, exportCsvProductions(Store.V), 'text/csv;charset=utf-8'),
-      'x-spools': () => saveFile(`${SITE.id}-bobines-${stampDay}.csv`, exportCsvSpools(Store.V), 'text/csv;charset=utf-8'),
+      'x-journal': () => saveFile(`${SITE.id}-${ui('journal')}-${stampDay}.csv`, exportCsvJournal(Store.V), 'text/csv;charset=utf-8'),
+      'x-sales': () => saveFile(`${SITE.id}-${ui('ventes-export')}-${stampDay}.csv`, exportCsvSales(Store.V), 'text/csv;charset=utf-8'),
+      'x-prod': () => saveFile(`${SITE.id}-${ui('productions-export')}-${stampDay}.csv`, exportCsvProductions(Store.V), 'text/csv;charset=utf-8'),
+      'x-spools': () => saveFile(`${SITE.id}-${ui('bobines-export')}-${stampDay}.csv`, exportCsvSpools(Store.V), 'text/csv;charset=utf-8'),
     },
   });
 };
@@ -4507,7 +4559,7 @@ const BRANDS = ['Bambu Lab', 'Polymaker', 'Prusament', 'eSun', 'Sunlu', 'Elegoo'
 
 const COLOR_PRESETS = [
   ['Noir', '#111111'], ['Blanc', '#F5F5F5'], ['Gris', '#8A8F98'], ['Rouge', '#E0262F'], ['Orange', '#F97316'], ['Jaune', '#FACC15'],
-  ['Vert', '#22C55E'], ['Bleu', '#2563EB'], ['Cyan', '#06B6D4'], ['Violet', '#7C3AED'], ['Rose', '#EC4899'], ['Marron', '#7C4A2D'],
+  ['Vert', '#22C55E'], ['Bleu', '#2563EB'], ['Cyan', '#06B6D4'], ['Violet', '#7C3AED'], [ui('Rose'), '#EC4899'], ['Marron', '#7C4A2D'],
   ['Beige', '#D6C3A1'], ['Or', '#C9A227'], ['Argent', '#C0C4CC'], ['Transparent', '#DDE7EE'],
 ];
 
@@ -4545,7 +4597,7 @@ VIEWS.bobines = {
       <div class="mb-4 grid grid-cols-3 gap-2">
         <div class="card px-3 py-3"><div class="text-[11px] text-slate-500">Filament restant</div><div class="font-display text-lg font-bold tabular-nums text-slate-50 sm:text-xl">${fmtKg(totalG)}</div></div>
         <div class="card px-3 py-3"><div class="text-[11px] text-slate-500">Valeur restante</div><div class="font-display text-lg font-bold tabular-nums text-slate-50 sm:text-xl">${fmtEur(valueLeft)}</div></div>
-        <button data-action="spool-view" data-value="${view === 'alert' ? 'active' : 'alert'}" class="card px-3 py-3 text-left ${alerts.length ? 'border-amber-400/25' : ''}"><div class="text-[11px] text-slate-500">En alerte</div><div class="font-display text-lg font-bold tabular-nums sm:text-xl ${alerts.length ? 'text-amber-300' : 'text-slate-50'}">${fmtNum(alerts.length)}</div></button>
+        <button data-action="spool-view" data-value="${view === 'alert' ? 'active' : 'alert'}" aria-pressed="${view === 'alert'}" title="${view === 'alert' ? 'Voir toutes les bobines actives' : 'Voir seulement les bobines en alerte'}" class="card px-3 py-3 text-left ${alerts.length ? 'border-amber-400/25' : ''}"><div class="text-[11px] text-slate-500">En alerte</div><div class="font-display text-lg font-bold tabular-nums sm:text-xl ${alerts.length ? 'text-amber-300' : 'text-slate-50'}">${fmtNum(alerts.length)}</div></button>
       </div>
       <div class="mb-4 flex flex-col gap-3">
         <div class="flex flex-wrap items-center gap-2">
@@ -4676,13 +4728,29 @@ function openSpoolModal({ spool = null, duplicate = false }) {
     base.archived = false;
     base.purchased_at = toLocalInput().slice(0, 10);
   }
-  // Poids actuel du rouleau : en modification, ce qu'il reste aujourd'hui (modifiable) ; à l'ajout,
-  // vide = bobine neuve. Enregistré comme une pesée : les productions le font baisser toutes seules.
-  const restantOuverture = editing ? roundDb(Math.max(0, toNum(spool.remaining_weight_g)), 2) : null;
-  const d = { s: base, remainingNow: restantOuverture, busy: false };
+  // Filament restant : en modification, ce qu'il reste aujourd'hui (modifiable) ; à l'ajout, vide =
+  // bobine neuve. Enregistré comme une pesée : les productions le font baisser toutes seules.
+  // Écart négatif (consommations déclarées au-delà du rouleau) : champ VIDE, pour que taper 0 compte
+  // comme une vraie correction (un 0 pré-rempli serait pris pour « inchangé » et ne corrigerait rien).
+  const restantOuverture = editing && toNum(spool.remaining_weight_g) >= 0 ? roundDb(toNum(spool.remaining_weight_g), 2) : null;
+  // une pesée existe : le restant ne dépend plus du poids initial ; sinon il le suit
+  const pesee = editing && valuesOf(Store.V.spool_movements || new Map()).some((m) => m.spool_id === spool.id && m.kind === 'weigh');
+  const poidsInitialOuverture = toNum(base.initial_weight_g);
+  const d = { s: base, remainingNow: restantOuverture, touche: false, busy: false };
   const V0 = Store.V;
   const knownMaterials = [...new Set([...MATERIALS, ...valuesOf(V0.spools).map((x) => x.material)])];
   const knownBrands = [...new Set([...valuesOf(V0.spools).map((x) => x.brand).filter(Boolean), ...BRANDS])];
+
+  // La fenêtre « Peser » sait retrancher la bobine vide ; ce champ-ci attend le filament SEUL.
+  // Si le chiffre tapé ressemble au poids posé sur la balance (filament + bobine vide), on le dit.
+  const noteRestant = () => {
+    const tare = toNum(d.s.tare_g);
+    const v = toNum(d.remainingNow, NaN);
+    if (!(tare > 0) || !Number.isFinite(v)) return '';
+    const attendu = toNum(restantOuverture, toNum(d.s.initial_weight_g)) + tare;
+    if (Math.abs(v - attendu) > Math.max(5, tare * 0.1)) return '';
+    return `Est-ce le poids lu sur la balance, bobine comprise ? Sans la bobine vide (${fmtG(tare)}), cela ferait ${fmtG(v - tare)}.`;
+  };
 
   const summary = () => {
     const cpg = toNum(d.s.initial_weight_g) > 0 ? toNum(d.s.price) / toNum(d.s.initial_weight_g) : 0;
@@ -4720,8 +4788,9 @@ function openSpoolModal({ spool = null, duplicate = false }) {
         </div>
         <div class="flex flex-wrap gap-1.5">${[250, 500, 750, 1000, 2000, 3000].map((w) => html`<button type="button" data-action="weight-preset" data-w="${w}" aria-pressed="${toNum(d.s.initial_weight_g) === w}" class="chip ${toNum(d.s.initial_weight_g) === w ? 'chip-active' : ''}">${w >= 1000 ? `${w / 1000} kg` : `${w} g`}</button>`)}</div>
         <div class="rounded-2xl border border-white/[0.06] bg-ink-850 p-3">
-          ${field('Poids actuel du rouleau', inputNum('remainingNow', d.remainingNow, { suffix: 'g', placeholder: editing ? String(weighExample(d.s)) : 'bobine neuve', inputmode: 'numeric' }),
-            { hint: editing ? 'Ce qu’il reste aujourd’hui, sans la bobine vide. Chaque production le fait baisser toute seule.' : 'Bobine déjà entamée ? Indique ce qu’il reste (sans la bobine vide). Laisse vide si elle est neuve.' })}
+          ${field('Filament restant', inputNum('remainingNow', d.remainingNow, { suffix: 'g', placeholder: editing ? '' : ui('neuve'), inputmode: 'numeric' }),
+            { hint: editing ? 'Ce qu’il reste aujourd’hui, sans compter la bobine vide. Chaque production le déduit toute seule.' : 'Bobine déjà utilisée ? Indique le filament qui reste, sans compter la bobine vide. Laisse vide si elle est neuve.' })}
+          <div id="restant-note" class="mt-1.5 text-[12px] text-amber-300">${noteRestant()}</div>
         </div>
         <details class="group rounded-2xl border border-white/[0.06] bg-ink-850 p-3" ${d.s.tare_g || d.s.notes ? raw('open') : ''}>
           <summary class="flex cursor-pointer list-none items-center justify-between text-sm text-slate-300">Plus de détails<span class="transition group-open:rotate-180">${icon('ChevronDown', 'w-4 h-4')}</span></summary>
@@ -4738,10 +4807,21 @@ function openSpoolModal({ spool = null, duplicate = false }) {
       const el = e.target;
       if (!el.name) return;
       if (el.name === 'remainingNow') {
-        d.remainingNow = parseNum(el.value);
+        d.remainingNow = el.value.trim() === '' ? null : parseNum(el.value);
+        d.touche = true;
+        setFieldError(m.el, 'remainingNow', '');
+        m.update('#restant-note', noteRestant());
         return;
       }
       d.s[el.name] = el.hasAttribute('data-num') ? (el.value.trim() === '' ? null : parseNum(el.value)) : el.value;
+      // sans pesée, le restant SUIT le poids initial : le champ montrerait sinon un chiffre que
+      // l'enregistrement contredirait aussitôt
+      if (el.name === 'initial_weight_g' && !d.touche && !pesee && restantOuverture !== null) {
+        d.remainingNow = roundDb(restantOuverture + (toNum(d.s.initial_weight_g) - poidsInitialOuverture), 2);
+        const champ = m.q('[name="remainingNow"]');
+        if (champ) champ.value = fmtNum(d.remainingNow);
+      }
+      if (el.name === 'tare_g') m.update('#restant-note', noteRestant());
       if (el.name === 'color_hex') {
         const sw = m.q('#spool-color-swatch');
         if (sw) sw.style.background = safeHex(el.value);
@@ -4757,6 +4837,7 @@ function openSpoolModal({ spool = null, duplicate = false }) {
         m.render();
       },
       'weight-preset': (el, e, m) => {
+        if (!d.touche && !pesee && restantOuverture !== null) d.remainingNow = roundDb(restantOuverture + (+el.dataset.w - poidsInitialOuverture), 2);
         d.s.initial_weight_g = +el.dataset.w;
         m.render();
       },
@@ -4769,11 +4850,11 @@ function openSpoolModal({ spool = null, duplicate = false }) {
         if (d.s.tare_g !== null && (!Number.isFinite(d.s.tare_g) || d.s.tare_g < 0)) { setFieldError(m.el, 'tare_g', 'Tare invalide.'); bad = true; }
         const saisi = String(readForm(m.el).remainingNow ?? '').trim();
         const remaining = saisi === '' ? null : parseNum(saisi);
-        if (saisi !== '' && (!Number.isFinite(remaining) || remaining < 0)) { setFieldError(m.el, 'remainingNow', 'Poids invalide.'); bad = true; }
-        else if (remaining !== null && !bad && weighProblem(d.s, remaining)) { setFieldError(m.el, 'remainingNow', weighProblem(d.s, remaining)); bad = true; }
         // enregistré seulement s'il apporte une information : bobine entamée à l'ajout, ou poids changé
         const peser = remaining !== null
           && (editing ? roundDb(remaining, 2) !== restantOuverture : roundDb(remaining, 2) !== roundDb(toNum(d.s.initial_weight_g), 2));
+        if (saisi !== '' && (!Number.isFinite(remaining) || remaining < 0)) { setFieldError(m.el, 'remainingNow', 'Poids invalide.'); bad = true; }
+        else if (peser && !bad && weighProblem(d.s, remaining)) { setFieldError(m.el, 'remainingNow', weighProblem(d.s, remaining)); bad = true; }
         if (bad) return;
         d.busy = true;
         const payload = {
@@ -4797,8 +4878,10 @@ function openSpoolModal({ spool = null, duplicate = false }) {
         }
         lsSet(lsKey('last_brand'), payload.brand);
         const res = await runOp('spool.save', payload, { success: editing ? 'Bobine modifiée' : 'Bobine ajoutée' });
-        if (opAccepted(res) && peser) {
-          await runOp('spool.weigh', { id: uuid(), spool_id: payload.id, measured_g: roundDb(remaining, 2), occurred_at: new Date().toISOString(), note: editing ? 'Poids actuel saisi' : 'Poids restant à l’ajout' }, { success: `Poids actuel enregistré : ${fmtG(remaining)}` });
+        if (peser && opAccepted(res) && (res.state === 'queued' || Store.V.spools.has(payload.id))) {
+          await runOp('spool.weigh', { id: uuid(), spool_id: payload.id, measured_g: roundDb(remaining, 2), occurred_at: new Date().toISOString(), note: 'Filament restant' }, { success: `Pesée enregistrée : ${fmtG(remaining)}` });
+        } else if (peser && opAccepted(res)) {
+          toast('Le filament restant n’a pas pu être enregistré : réessaie depuis « Peser ».', { tone: 'warn' });
         }
         d.busy = false;
         if (opAccepted(res)) m.close();
@@ -7359,7 +7442,9 @@ function reportTables(V, r) {
     },
     {
       title: 'Meilleures ventes',
-      cols: [['Pièce', 315, 'wrap'], ['Quantité', 90, 'num'], ['Chiffre d’affaires', 110, 'num']],
+      // le port facturé n'est rattaché à aucun produit : le total de cette colonne est donc inférieur
+      // au chiffre d'affaires de l'en-tête — l'intitulé le dit
+      cols: [['Pièce', 315, 'wrap'], ['Quantité', 90, 'num'], ['Ventes hors port', 110, 'num']],
       rows: r.tops.map((t) => [t.name, fmtNum(t.qty), fmtEur(t.revenue)]),
     },
     {
@@ -8224,12 +8309,15 @@ const Mfa = {
       const locaux = (s && s.session && s.session.user && s.session.user.factors) || [];
       if (locaux.some((f) => f.status === 'verified' && f.factor_type === 'totp')) return false;
     } catch { /* session illisible : on demande au serveur */ }
+    // hors-ligne : on n'impose rien (la base refuse de toute façon toute écriture sans le code).
+    // Toute AUTRE erreur impose l'activation : ne jamais laisser entrer sur un doute.
+    const sansReseau = (e) => classifyError(wrapError(e, e && e.status)) === 'network';
     try {
       const { data, error } = await backend.sb.auth.mfa.listFactors();
-      if (error) return false;
+      if (error) return !sansReseau(error);
       return !((data && data.totp) || []).some((f) => f.status === 'verified');
-    } catch {
-      return false;
+    } catch (e) {
+      return !sansReseau(e);
     }
   },
 
@@ -8256,7 +8344,7 @@ Screens.mfa = function mfaScreen({ backend, user, factorId }) {
       </form>
       <div class="mt-4 flex flex-wrap items-center justify-between gap-2 text-[13px]">
         <button class="text-slate-400 hover:text-slate-200" id="mfa-logout">Se déconnecter</button>
-        ${navigator.onLine === false ? html`<button class="font-medium text-neon" id="mfa-offline">Continuer hors-ligne</button>` : ''}
+        ${navigator.onLine === false && lsGet(LS.mfaVu, false) ? html`<button class="font-medium text-neon" id="mfa-offline">Continuer hors-ligne</button>` : ''}
       </div>
     </div>`);
   const form = el.querySelector('#mfa-form');
@@ -8275,6 +8363,7 @@ Screens.mfa = function mfaScreen({ backend, user, factorId }) {
     try {
       const err = await Mfa.verify(backend, factorId, code);
       if (err) return show(authErrorMessage(err));
+      lsSet(LS.mfaVu, true); // code déjà validé ici : la copie locale restera consultable hors-ligne
       await Boot.enter(backend, user);
     } catch (err) {
       show(authErrorMessage(err));
@@ -8778,63 +8867,15 @@ const Boot = {
     App.start();
     Sync.start(backend);
     this.bindNotifier();
-    await this.importOldAddress();
   },
 
-  // ⚠️ (19/09) DÉMÉNAGEMENT fadeflux.github.io -> Railway. Une action faite hors-ligne sur l'ancienne
-  // adresse et pas encore envoyée restait dans le stockage de CETTE adresse-là, que la nouvelle ne peut
-  // pas lire : elle était perdue sans un mot. La page de redirection (tools/railway-redirect.mjs ; avant : redirect-old.mjs) la lit et
-  // l'apporte dans le lien (#p3d-import=…) ; on la garde le temps de la connexion, puis on la remet dans
-  // la file de l'appareil (même compte seulement), d'où elle part comme n'importe quelle action.
+  // ⚠️ (09/10) Le déménagement est terminé. Le lien « #p3d-import=… » servait à rapatrier les actions
+  // restées sur l'ancienne adresse ; il injectait ces actions dans la file d'envoi SANS confirmation.
+  // N'importe qui pouvait donc envoyer un lien qui supprime des bobines ou change les réglages, avec la
+  // session de l'utilisateur. Le lien est désormais IGNORÉ et effacé de la barre d'adresse.
   captureOldAddressImport() {
-    const m = location.hash.match(/^#p3d-import=([A-Za-z0-9_-]+)$/);
-    if (!m) return;
-    try {
-      sessionStorage.setItem(LS.importEnAttente, m[1]);
-    } catch { /* stockage indisponible : rien à garder */ }
+    if (!/^#p3d-import=/.test(location.hash)) return;
     history.replaceState(null, '', `${location.pathname}${location.search}#/`);
-  },
-
-  async importOldAddress() {
-    let raw = null;
-    try {
-      raw = sessionStorage.getItem(LS.importEnAttente);
-    } catch {
-      return;
-    }
-    if (!raw) return;
-    let paquets = null;
-    try {
-      paquets = JSON.parse(b64urlDecode(raw));
-    } catch {
-      paquets = null;
-    }
-    if (!Array.isArray(paquets)) {
-      sessionStorage.removeItem(LS.importEnAttente);
-      return;
-    }
-    const mien = paquets.find((p) => p && p.db === Store.dbName);
-    if (!mien) {
-      toast("Des actions faites sur l'ancienne adresse appartiennent à un autre compte : connecte-toi avec ce compte pour les récupérer.", { tone: 'warn' });
-      return;
-    }
-    const deja = new Set(lsGet(LS.importes, []));
-    let n = 0;
-    for (const op of Array.isArray(mien.ops) ? mien.ops : []) {
-      if (!op || !op.id || !OPS[op.type] || deja.has(op.id) || Store.Q.some((o) => o.id === op.id)) continue;
-      if (await Store.putOp({ ...op, status: op.status === 'failed' ? 'failed' : 'pending', attempts: 0 })) {
-        deja.add(op.id);
-        n++;
-      }
-    }
-    lsSet(LS.importes, [...deja]);
-    sessionStorage.removeItem(LS.importEnAttente);
-    if (!n) return;
-    Store.rebuild();
-    Sync.emit();
-    toast(n === 1 ? "1 action faite sur l'ancienne adresse a été récupérée : elle part maintenant."
-      : `${n} actions faites sur l'ancienne adresse ont été récupérées : elles partent maintenant.`, { tone: 'ok' });
-    Sync.kick();
   },
 
   async startDemo() {
